@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">qsp3_wallet</string>
+    <string name="title_activity_main">qsp3_wallet</string>
+    <string name="package_name">com.qsp3.wallet</string>
+    <string name="custom_url_scheme">com.qsp3.wallet</string>
+</resources>

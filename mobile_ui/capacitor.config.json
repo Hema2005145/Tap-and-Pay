@@ -1,0 +1,8 @@
+{
+  "appId": "com.qsp3.wallet",
+  "appName": "qsp3_wallet",
+  "webDir": "dist",
+  "server": {
+    "cleartext": true
+  }
+}

@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  api_gateway:
+    build: .
+    command: python server/api_gateway.py
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PYTHONPATH=/app
+
+  quic_server:
+    build: .
+    command: python server/quic_server.py
+    ports:
+      - "4433:4433/udp"
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PYTHONPATH=/app
+
+  flower_server:
+    build: .
+    command: python server/server_fl.py
+    ports:
+      - "9091:9091"
+    environment:
+      - HOST=0.0.0.0
+      - PYTHONPATH=/app

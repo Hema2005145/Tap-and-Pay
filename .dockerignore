@@ -1,0 +1,14 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+Dockerfile
+docker-compose.yml
+zkp/balance_check_cpp/*.o
+zkp/balance_check_cpp/*.exe
+.git

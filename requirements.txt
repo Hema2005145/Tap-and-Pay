@@ -1,0 +1,22 @@
+# Core Network & Cryptography (Phase 1 & Phase 5)
+aioquic==1.3.0
+cryptography==48.0.0
+
+# Future Phases Dependencies (uncomment when implementing these phases)
+
+# Phase 2: Backend REST APIs & DB
+fastapi
+uvicorn
+pymongo
+motor
+python-dotenv
+
+# Phase 3 & 9: Behavioral AI & Federated Learning
+tensorflow
+flwr
+
+# Phase 6 & 8: Zero Knowledge Proofs & Blockchain
+web3
+eth-tester
+py-evm
+py-solc-x
