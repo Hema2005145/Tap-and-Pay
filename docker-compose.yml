@@ -3,7 +3,7 @@ version: '3.8'
 services:
   api_gateway:
     build: .
-    command: python server/api_gateway.py
+    command: python -m uvicorn server.api_gateway:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     env_file:

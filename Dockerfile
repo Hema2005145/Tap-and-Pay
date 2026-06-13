@@ -29,5 +29,5 @@ COPY . .
 # but to be safe we can use the Makefile.
 RUN cd zkp/balance_check_cpp && make clean || true && make
 
-# Command will be overridden by docker-compose
-CMD ["python", "run_integration.py"]
+# Default command runs the API Gateway
+CMD ["python", "-m", "uvicorn", "server.api_gateway:app", "--host", "0.0.0.0", "--port", "8000"]
