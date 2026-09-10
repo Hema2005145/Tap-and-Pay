@@ -20,6 +20,8 @@ from utils.pqc import encapsulate
 from utils.totp import get_totp_token
 from utils.crypto_payload import encrypt_payload
 from utils.binary_payload import serialize_payment
+from utils.event_broadcaster import broadcast_quic_event
+
 
 class PaymentClientProtocol(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs):
@@ -101,6 +103,13 @@ class BehavioralAI:
         print(f"Client [AI]: Context Error Score = {mae_error:.4f} (Threshold: {self.threshold:.4f})")
         
         return mae_error > self.threshold
+        is_anomaly = bool(mae_error > self.threshold)
+        broadcast_quic_event("BEHAVIORAL_AI", "ANOMALY" if is_anomaly else "SUCCESS", {
+            "mae_error": round(float(mae_error), 4),
+            "threshold": round(float(self.threshold), 4),
+            "is_anomaly": is_anomaly
+        })
+        return is_anomaly
 
 class PaymentClient:
     def __init__(self, configuration, totp_secret, cert_dir, ai_model=None):
@@ -130,6 +139,21 @@ class PaymentClient:
         )
         self.protocol = await self.connection.__aenter__()
         return self
+        try:
+            self.connection = connect(
+                "127.0.0.1",
+                4433,
+                configuration=self.configuration,
+                create_protocol=PaymentClientProtocol
+            )
+            self.protocol = await self.connection.__aenter__()
+            broadcast_quic_event("QUIC_CONNECTION", "SUCCESS", {"endpoint": "127.0.0.1:4433"})
+            broadcast_quic_event("MTLS_VERIFICATION", "SUCCESS", {"cert": "client_cert.pem", "status": "VERIFIED"})
+            return self
+        except Exception as e:
+            broadcast_quic_event("QUIC_CONNECTION", "FAILED", {"endpoint": "127.0.0.1:4433", "error": str(e)})
+            raise e
+
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.connection:
@@ -184,11 +208,14 @@ class PaymentClient:
             self.session["session_id"] = self.protocol.session_id
             self.session["shared_secret"] = shared_secret
             print(f"Client [Session]: Session established with ID: {self.session['session_id']}")
+            broadcast_quic_event("PQC_KEY_EXCHANGE", "SUCCESS", {"session_id": self.session["session_id"], "algorithm": "Kyber-like / Custom PQC"})
+            broadcast_quic_event("SESSION_ESTABLISHED", "SUCCESS", {"session_id": self.session["session_id"]})
 
     def generate_zkp(self, amount_cents, private_balance_cents):
         """Generates a Zero-Knowledge Proof that balance >= amount using SnarkJS."""
         try:
             print("Client [ZKP]: Generating cryptographic proof of funds...")
+            broadcast_quic_event("ZKP_GENERATION", "PROCESSING", {"amount_cents": amount_cents})
             input_file = os.path.join(self.zkp_dir, "temp_input.json")
             with open(input_file, "w") as f:
                 json.dump({"amount": amount_cents, "balance": private_balance_cents}, f)
@@ -223,9 +250,11 @@ class PaymentClient:
                 path = os.path.join(self.zkp_dir, f)
                 if os.path.exists(path): os.remove(path)
                 
+            broadcast_quic_event("ZKP_GENERATION", "SUCCESS", {"proof_system": "Groth16", "curve": "bn128"})
             return proof
         except Exception as e:
             print(f"Client [ZKP Error]: Failed to generate proof: {e}")
+            broadcast_quic_event("ZKP_GENERATION", "FAILED", {"error": str(e)})
             return None
 
     async def pay(self, amount_cents, client_id, behavior_data=None, force_refetch=False, private_balance=None):
@@ -251,6 +280,7 @@ class PaymentClient:
         if private_balance is not None:
             if private_balance < amount_cents:
                 print("Client [ZKP]: Insufficient local balance. Proof generation mathematically impossible. Blocking Tap.")
+                broadcast_quic_event("ZKP_GENERATION", "DECLINED_LOCALLY", {"error": "Insufficient local funds for proof"})
                 return b"DECLINED_LOCALLY: Insufficient funds."
             zk_proof = self.generate_zkp(amount_cents, private_balance)
 
@@ -260,6 +290,7 @@ class PaymentClient:
         token = int(get_totp_token(self.totp_secret))
         binary_payload = serialize_payment(amount_cents, client_id, token, int(time.time()))
         encrypted = encrypt_payload(self.session["shared_secret"], binary_payload)
+        broadcast_quic_event("AES_ENCRYPTION", "SUCCESS", {"cipher": "AES-256-GCM"})
         
         payload_dict = {
             "session_id": self.session["session_id"],
@@ -273,12 +304,18 @@ class PaymentClient:
         payload_json = json.dumps(payload_dict)
         request_msg = f"SECURE_PAYMENT:{payload_json}".encode('utf-8')
         
+        broadcast_quic_event("PAYMENT_TRANSMISSION", "PROCESSING", {"session_id": self.session["session_id"]})
         stream_id = self.protocol._quic.get_next_available_stream_id()
         self.protocol._quic.send_stream_data(stream_id, request_msg, end_stream=True)
         self.protocol.transmit()
         
         await self.protocol.response_received.wait()
         self.protocol.response_received.clear()
+        
+        ack_str = self.protocol.payment_ack if isinstance(self.protocol.payment_ack, str) else (self.protocol.payment_ack.decode('utf-8') if self.protocol.payment_ack else "UNKNOWN")
+        broadcast_quic_event("PAYMENT_ACK_RECEIVED", "SUCCESS" if ("PAYMENT_ACK" in ack_str) else "FAILED", {
+            "raw_ack": ack_str
+        })
         return self.protocol.payment_ack
 
 async def main():

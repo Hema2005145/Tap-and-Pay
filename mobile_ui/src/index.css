@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 :root {
   --bg-color: #0b0c10;
@@ -7,12 +8,30 @@
   --secondary-color: #45a29e;
   --text-main: #c5c6c7;
   --text-light: #ffffff;
+  --bg-color: #080a0f;
+  --bg-pattern: #0d121c;
+  --surface-color: #111722;
+  --surface-card: #161e2e;
+  --surface-card-hover: #1c263a;
+  --primary-color: #00f2fe;
+  --secondary-color: #4facfe;
+  --text-main: #94a3b8;
+  --text-light: #f8fafc;
+  --text-dim: #64748b;
   --danger-color: #ff4b4b;
   --success-color: #00e676;
+  --warning-color: #ffa726;
+  --info-color: #38bdf8;
   
   --glass-bg: rgba(31, 40, 51, 0.6);
   --glass-border: rgba(102, 252, 241, 0.2);
   --shadow-neon: 0 0 15px rgba(102, 252, 241, 0.3), 0 0 30px rgba(102, 252, 241, 0.1);
+  --glass-bg: rgba(18, 24, 38, 0.75);
+  --glass-card: rgba(22, 30, 46, 0.85);
+  --glass-border: rgba(0, 242, 254, 0.15);
+  --glass-border-subtle: rgba(255, 255, 255, 0.07);
+  --shadow-neon: 0 0 20px rgba(0, 242, 254, 0.25), 0 0 40px rgba(0, 242, 254, 0.08);
+  --shadow-card: 0 10px 30px rgba(0, 0, 0, 0.4);
 }
 
 * {
@@ -25,6 +44,11 @@ body {
   margin: 0;
   font-family: 'Outfit', sans-serif;
   background-color: var(--bg-color);
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(0, 242, 254, 0.05) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(79, 172, 254, 0.04) 0%, transparent 40%),
+    linear-gradient(to bottom, #080a0f, #0c1017);
+  background-attachment: fixed;
   color: var(--text-main);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -33,27 +57,38 @@ body {
   align-items: center;
   min-height: 100vh;
   overflow: hidden;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 #root {
   width: 100%;
   height: 100%;
+  min-height: 100vh;
   display: flex;
   justify-content: center;
   align-items: center;
+  flex-direction: column;
 }
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+  background: rgba(8, 10, 15, 0.6);
 }
 ::-webkit-scrollbar-thumb {
   background: var(--surface-color);
   border-radius: 10px;
+  background: #1e293b;
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--secondary-color);
 }
+
