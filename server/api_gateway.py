@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from utils.db import UserProfile, TransactionRecord, get_user, create_user, update_balance, log_transaction, db
 import uvicorn
 import os
+import datetime
 from blockchain.web3_integration import log_to_blockchain
 
 app = FastAPI(title="QSP3-Advanced API Gateway")

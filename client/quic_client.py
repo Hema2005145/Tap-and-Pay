@@ -102,7 +102,6 @@ class BehavioralAI:
         mae_error = np.mean(np.abs(reconstructed - scaled_data))
         print(f"Client [AI]: Context Error Score = {mae_error:.4f} (Threshold: {self.threshold:.4f})")
         
-        return mae_error > self.threshold
         is_anomaly = bool(mae_error > self.threshold)
         broadcast_quic_event("BEHAVIORAL_AI", "ANOMALY" if is_anomaly else "SUCCESS", {
             "mae_error": round(float(mae_error), 4),
@@ -131,14 +130,6 @@ class PaymentClient:
             self.mpc_share = None
 
     async def __aenter__(self):
-        self.connection = connect(
-            "127.0.0.1",
-            4433,
-            configuration=self.configuration,
-            create_protocol=PaymentClientProtocol
-        )
-        self.protocol = await self.connection.__aenter__()
-        return self
         try:
             self.connection = connect(
                 "127.0.0.1",
