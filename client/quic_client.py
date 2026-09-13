@@ -248,7 +248,7 @@ class PaymentClient:
             broadcast_quic_event("ZKP_GENERATION", "FAILED", {"error": str(e)})
             return None
 
-    async def pay(self, amount_cents, client_id, behavior_data=None, force_refetch=False, private_balance=None):
+    async def pay(self, amount_cents, client_id, behavior_data=None, force_refetch=False, private_balance=None, receiver_id=2):
         """
         behavior_data: dict containing lat, lon, tilt_x, tilt_y, tilt_z, hour
         """
@@ -279,7 +279,7 @@ class PaymentClient:
         await self._ensure_session(force_refetch=force_refetch)
         
         token = int(get_totp_token(self.totp_secret))
-        binary_payload = serialize_payment(amount_cents, client_id, token, int(time.time()))
+        binary_payload = serialize_payment(amount_cents, client_id, token, int(time.time()), receiver_id=receiver_id)
         encrypted = encrypt_payload(self.session["shared_secret"], binary_payload)
         broadcast_quic_event("AES_ENCRYPTION", "SUCCESS", {"cipher": "AES-256-GCM"})
         

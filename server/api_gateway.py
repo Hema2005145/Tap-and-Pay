@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from utils.db import UserProfile, TransactionRecord, get_user, create_user, update_balance, log_transaction, db
+from utils.db import UserProfile, TransactionRecord, get_user, create_user, update_balance, log_transaction, settle_payment_atomic, db
 import uvicorn
 import os
 import datetime
@@ -37,18 +37,25 @@ async def check_balance(client_id: int):
 
 @app.post("/transaction")
 async def record_transaction(tx: TransactionRecord):
-    # Log to MongoDB
-    await log_transaction(tx)
-    # Update balance atomically
-    await update_balance(tx.client_id, -tx.amount_cents)
+    sender_id = tx.sender_id if tx.sender_id is not None else tx.client_id
+    receiver_id = tx.receiver_id if tx.receiver_id is not None else 2
+    success, msg = await settle_payment_atomic(sender_id, receiver_id, tx.amount_cents, tx.tx_hash, tx.status)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
     # Log to Blockchain
-    await log_to_blockchain(tx.tx_hash, tx.client_id, tx.amount_cents, tx.status)
-    return {"status": "Transaction logged and balance updated"}
+    await log_to_blockchain(tx.tx_hash, sender_id, tx.amount_cents, tx.status)
+    return {"status": "Transaction settled atomically and balance updated"}
 
 @app.get("/audit/{client_id}")
 async def get_audit_trail(client_id: int):
-    # Retrieve last 10 transactions
-    cursor = db.transactions.find({"client_id": client_id}).sort("timestamp", -1).limit(10)
+    # Retrieve last 10 transactions where client is either sender or receiver
+    cursor = db.transactions.find({
+        "$or": [
+            {"client_id": client_id},
+            {"sender_id": client_id},
+            {"receiver_id": client_id}
+        ]
+    }).sort("timestamp", -1).limit(10)
     history = await cursor.to_list(length=10)
     # Clean up _id for JSON serialization
     for tx in history:
@@ -56,7 +63,6 @@ async def get_audit_trail(client_id: int):
     return {"client_id": client_id, "history": history}
 
 @app.get("/quic/status")
-
 async def get_quic_status():
     import socket
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -80,7 +86,8 @@ async def execute_quic_payment(req: dict):
         import ssl
 
         amount_cents = int(req.get("amount_cents", 2500))
-        client_id = int(req.get("client_id", 1))
+        sender_id = int(req.get("sender_id", req.get("client_id", 1)))
+        receiver_id = int(req.get("receiver_id", 2))
         lat = float(req.get("lat", 12.9716))
         lon = float(req.get("lon", 77.5946))
         tilt_x = float(req.get("tilt_x", 0.70))
@@ -90,7 +97,7 @@ async def execute_quic_payment(req: dict):
         if private_balance is not None:
             private_balance = int(private_balance)
         else:
-            user = await get_user(client_id)
+            user = await get_user(sender_id)
             private_balance = user["balance_cents"] if user else 50000
 
         behavior_data = {
@@ -117,8 +124,10 @@ async def execute_quic_payment(req: dict):
             ai_shield = None
 
         async with PaymentClient(configuration, totp_secret, cert_dir, ai_shield) as client:
-            ack = await client.pay(amount_cents, client_id, behavior_data, private_balance=private_balance)
+            ack = await client.pay(amount_cents, sender_id, behavior_data, private_balance=private_balance, receiver_id=receiver_id)
             ack_str = ack.decode("utf-8") if isinstance(ack, bytes) else str(ack)
+            if "PAYMENT_ERR" in ack_str or "DECLINED" in ack_str or "AI_BLOCKED" in ack_str:
+                return {"status": "FAILED", "ack": ack_str}
             return {"status": "SUCCESS", "ack": ack_str}
     except Exception as e:
         broadcast_quic_event("QUIC_CONNECTION", "OFFLINE", {

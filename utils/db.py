@@ -26,6 +26,8 @@ class UserProfile(BaseModel):
 class TransactionRecord(BaseModel):
     tx_hash: str
     client_id: int
+    sender_id: Optional[int] = None
+    receiver_id: Optional[int] = None
     amount_cents: int
     status: str # "APPROVED", "FLAGGED", "BLOCKED"
     timestamp: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
@@ -65,13 +67,83 @@ async def create_user(user: UserProfile):
     return user
 
 async def update_balance(client_id: int, amount_change_cents: int):
-    # Atomic update to prevent race conditions
+    # Atomic update
     result = await db.users.update_one(
         {"client_id": client_id},
         {"$inc": {"balance_cents": amount_change_cents}}
     )
+    if client_id in balance_cache:
+        del balance_cache[client_id]
     return result.modified_count > 0
 
 async def log_transaction(tx: TransactionRecord):
     tx_data = tx.model_dump() if hasattr(tx, "model_dump") else tx.dict()
     await db.transactions.insert_one(tx_data)
+
+async def settle_payment_atomic(sender_id: int, receiver_id: int, amount_cents: int, tx_hash: str, status: str = "APPROVED"):
+    """
+    Genuine MongoDB Multi-Document ACID Transaction:
+    Atomically deducts sender and credits receiver within a single database transaction.
+    Guarantees that either BOTH balances update or NEITHER updates.
+    """
+    if amount_cents <= 0:
+        return False, "Amount must be strictly positive"
+
+    try:
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                # 1. Validate sender exists
+                sender = await db.users.find_one({"client_id": sender_id}, session=session)
+                if not sender:
+                    raise ValueError(f"Sender client ID {sender_id} does not exist")
+
+                # 2. Validate receiver exists
+                receiver = await db.users.find_one({"client_id": receiver_id}, session=session)
+                if not receiver:
+                    raise ValueError(f"Receiver client ID {receiver_id} does not exist")
+
+                # 3. Check sender balance
+                sender_bal = sender.get("balance_cents", 0)
+                if sender_bal < amount_cents:
+                    raise ValueError(f"Insufficient funds: Sender {sender_id} has ${sender_bal/100:.2f}, requires ${amount_cents/100:.2f}")
+
+                # 4. Atomic conditional deduction from sender
+                deduct_result = await db.users.update_one(
+                    {"client_id": sender_id, "balance_cents": {"$gte": amount_cents}},
+                    {"$inc": {"balance_cents": -amount_cents}},
+                    session=session
+                )
+                if deduct_result.modified_count == 0:
+                    raise ValueError("Concurrent race condition or balance changed during execution")
+
+                # 5. Atomic credit to receiver
+                credit_result = await db.users.update_one(
+                    {"client_id": receiver_id},
+                    {"$inc": {"balance_cents": amount_cents}},
+                    session=session
+                )
+                if credit_result.modified_count == 0:
+                    raise ValueError(f"Failed to credit receiver {receiver_id}")
+
+                # 6. Record transaction
+                record = TransactionRecord(
+                    tx_hash=tx_hash,
+                    client_id=sender_id,
+                    sender_id=sender_id,
+                    receiver_id=receiver_id,
+                    amount_cents=amount_cents,
+                    status=status
+                )
+                record_data = record.model_dump() if hasattr(record, "model_dump") else record.dict()
+                await db.transactions.insert_one(record_data, session=session)
+
+        # Invalidate RAM cache for both parties after successful commit
+        if sender_id in balance_cache: del balance_cache[sender_id]
+        if receiver_id in balance_cache: del balance_cache[receiver_id]
+
+        print(f"DB [ACID Settlement]: Successfully transferred ${amount_cents/100:.2f} from Client {sender_id} to Client {receiver_id}.")
+        return True, "SUCCESS"
+
+    except Exception as e:
+        print(f"DB [ACID Settlement Aborted]: {e}")
+        return False, str(e)

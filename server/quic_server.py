@@ -18,7 +18,7 @@ from utils.crypto_payload import decrypt_payload
 from utils.binary_payload import deserialize_payment
 import hashlib
 
-from utils.db import get_user, log_transaction, update_balance, TransactionRecord, get_balance_optimized
+from utils.db import get_user, log_transaction, update_balance, TransactionRecord, get_balance_optimized, settle_payment_atomic
 from utils.zkp_verifier import verify_proof
 from utils.shamir_mpc import reconstruct_secret
 import datetime
@@ -42,37 +42,40 @@ class PaymentServerProtocol(QuicConnectionProtocol):
         super().__init__(*args, **kwargs)
         self.stream_buffers = {}
 
-    async def log_audit_trail(self, tx_hash, amount_cents, client_id, status="APPROVED"):
-        """Background task for audit logging and DB update."""
+    async def log_audit_trail(self, tx_hash, amount_cents, sender_id, receiver_id=2, status="APPROVED"):
+        """Background task for multi-user ACID settlement and audit logging."""
         try:
-            # 1. Update Cloud Balance (Now happens AFTER ZKP approval)
-            await update_balance(client_id, -amount_cents)
-            
-            # 2. Create Audit Record
-            record = TransactionRecord(
-                tx_hash=tx_hash,
-                client_id=client_id,
-                amount_cents=amount_cents,
-                status=status
-            )
-            await log_transaction(record)
-            print(f"Server [Audit-Cloud]: Tx {tx_hash[:10]}... committed to MongoDB Atlas.")
-            print(f"Server [Audit-Cloud]: Tx {tx_hash[:10]}... committed to database.")
-            broadcast_quic_event("MONGODB_UPDATE", "SUCCESS", {
-                "tx_hash": tx_hash,
-                "amount_cents": amount_cents,
-                "client_id": client_id,
-                "status": "COMMITTED"
-            })
-
-            # 3. PHASE 8: Log to Blockchain
-            success = await log_to_blockchain(tx_hash, client_id, amount_cents, status)
+            # 1. Update Cloud Balances via Genuine MongoDB Multi-Document ACID Transaction
+            success, msg = await settle_payment_atomic(sender_id, receiver_id, amount_cents, tx_hash, status)
             if success:
+                print(f"Server [Audit-Cloud]: Tx {tx_hash[:10]}... committed atomically (Sender {sender_id} -> Receiver {receiver_id}).")
+                broadcast_quic_event("MONGODB_UPDATE", "SUCCESS", {
+                    "tx_hash": tx_hash,
+                    "amount_cents": amount_cents,
+                    "sender_id": sender_id,
+                    "receiver_id": receiver_id,
+                    "client_id": sender_id,
+                    "status": "COMMITTED"
+                })
+            else:
+                print(f"Server [Audit-Cloud Error]: Atomic settlement failed: {msg}")
+                broadcast_quic_event("MONGODB_UPDATE", "FAILED", {
+                    "tx_hash": tx_hash,
+                    "sender_id": sender_id,
+                    "receiver_id": receiver_id,
+                    "error": msg
+                })
+
+            # 2. PHASE 8: Log to Blockchain
+            blockchain_success = await log_to_blockchain(tx_hash, sender_id, amount_cents, status)
+            if blockchain_success:
                 print(f"Server [Audit-Blockchain]: Tx {tx_hash[:10]}... successfully stored on immutable ledger.")
                 broadcast_quic_event("BLOCKCHAIN_AUDIT", "SUCCESS", {
                     "tx_hash": tx_hash,
                     "amount_cents": amount_cents,
-                    "client_id": client_id,
+                    "client_id": sender_id,
+                    "sender_id": sender_id,
+                    "receiver_id": receiver_id,
                     "status": "MINED_ON_CHAIN"
                 })
             else:
@@ -80,7 +83,7 @@ class PaymentServerProtocol(QuicConnectionProtocol):
                 broadcast_quic_event("BLOCKCHAIN_AUDIT", "FAILED", {
                     "tx_hash": tx_hash,
                     "amount_cents": amount_cents,
-                    "client_id": client_id,
+                    "client_id": sender_id,
                     "error": "Blockchain write failed"
                 })
 
@@ -110,6 +113,28 @@ class PaymentServerProtocol(QuicConnectionProtocol):
                 "session_id": session_id,
                 "cipher": "AES-256-GCM"
             })
+
+            sender_id = decrypted_data.get("sender_id", decrypted_data.get("client_id", 1))
+            receiver_id = decrypted_data.get("receiver_id", 2)
+
+            # Pre-validate sender and receiver existence in database
+            sender_user = await get_user(sender_id)
+            if not sender_user:
+                print(f"Server [Error]: Sender client ID {sender_id} not found in database.")
+                response = f"PAYMENT_ERR: Nonexistent sender ID {sender_id}".encode('utf-8')
+                broadcast_quic_event("PAYMENT_ACK", "FAILED", {"error": f"Sender ID {sender_id} not found"})
+                self._quic.send_stream_data(stream_id, response, end_stream=True)
+                self.transmit()
+                return
+
+            receiver_user = await get_user(receiver_id)
+            if not receiver_user:
+                print(f"Server [Error]: Receiver client ID {receiver_id} not found in database.")
+                response = f"PAYMENT_ERR: Nonexistent receiver ID {receiver_id}".encode('utf-8')
+                broadcast_quic_event("PAYMENT_ACK", "FAILED", {"error": f"Receiver ID {receiver_id} not found"})
+                self._quic.send_stream_data(stream_id, response, end_stream=True)
+                self.transmit()
+                return
 
             # --- CRITICAL PATH START ---
             is_token_valid = verify_totp_token(self.totp_secret, decrypted_data["totp_token"])
@@ -146,7 +171,7 @@ class PaymentServerProtocol(QuicConnectionProtocol):
             else:
                 # Fallback to database if client doesn't support ZKP yet
                 print("Server [Warning]: Client did not send ZKP. Falling back to DB lookup.")
-                balance_cents = await get_balance_optimized(decrypted_data['client_id'])
+                balance_cents = await get_balance_optimized(sender_id)
                 has_funds = balance_cents is not None and balance_cents >= decrypted_data['amount_cents']
                 broadcast_quic_event("ZKP_VERIFICATION", "NOT_SENT_DB_FALLBACK", {
                     "proof_system": "NONE",
@@ -200,11 +225,13 @@ class PaymentServerProtocol(QuicConnectionProtocol):
                     "tx_hash": tx_hash,
                     "amount_cents": amount_cents,
                     "amount_str": amount_str,
-                    "client_id": decrypted_data['client_id']
+                    "client_id": sender_id,
+                    "sender_id": sender_id,
+                    "receiver_id": receiver_id
                 })
                 
                 # --- BACKGROUND PATH START ---
-                asyncio.create_task(self.log_audit_trail(tx_hash, amount_cents, decrypted_data['client_id']))
+                asyncio.create_task(self.log_audit_trail(tx_hash, amount_cents, sender_id, receiver_id))
             # --- CRITICAL PATH END ---
                 
         except Exception as e:
