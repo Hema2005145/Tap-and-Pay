@@ -270,6 +270,96 @@
 }
 
 /* --- COLUMN 1: BROWSER PAYMENT DEMO --- */
+/* --- MULTI-USER DEMO SELECTOR (Phase 3) --- */
+.multi-user-selector-card {
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-select-grid {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.user-select-field-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.user-select-label {
+  display: flex;
+  align-items: center;
+}
+
+.user-role-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.user-role-badge.sender-badge {
+  background: rgba(0, 242, 254, 0.12);
+  color: var(--primary-color);
+  border: 1px solid rgba(0, 242, 254, 0.3);
+}
+
+.user-role-badge.receiver-badge {
+  background: rgba(255, 167, 38, 0.12);
+  color: var(--warning-color);
+  border: 1px solid rgba(255, 167, 38, 0.3);
+}
+
+.user-select-arrow {
+  color: var(--text-dim);
+  font-size: 1rem;
+  font-weight: 700;
+  padding-top: 14px;
+}
+
+.user-select-control {
+  appearance: auto;
+  -webkit-appearance: menulist;
+  background: #0d121c;
+  color: var(--text-light);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 6px 8px;
+  border: 1px solid rgba(0, 242, 254, 0.35);
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  position: relative;
+  z-index: 10;
+}
+
+.user-select-control:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.35);
+}
+
+.user-select-control option {
+  background: #0d121c;
+  color: #ffffff;
+  font-size: 0.82rem;
+  padding: 4px;
+}
+
 .virtual-card {
   width: 100%;
   height: 180px;

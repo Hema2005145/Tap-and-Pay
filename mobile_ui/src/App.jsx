@@ -26,10 +26,21 @@ const INITIAL_PIPELINE = {
   blockchainAudit: { status: 'WAITING', smart_contract: 'AuditTrail.sol', block_number: null, status_on_chain: null }
 };
 
+const AVAILABLE_USERS = [
+  { id: 100, name: 'Customer A', role: 'customer' },
+  { id: 200, name: 'Customer B', role: 'customer' },
+  { id: 300, name: 'Customer C', role: 'customer' },
+  { id: 400, name: 'Merchant A', role: 'merchant' },
+];
+
 function App() {
   const [role, setRole] = useState('selection'); // 'selection' | 'sender' | 'receiver'
   
-  // Sender State (Client 1)
+  // Multi-User Selection State
+  const [selectedSenderId, setSelectedSenderId] = useState(100);
+  const [selectedReceiverId, setSelectedReceiverId] = useState(400);
+
+  // Sender State
   const [status, setStatus] = useState('idle');
   const [statusMsg, setStatusMsg] = useState('');
   const [amount, setAmount] = useState('25.00');
@@ -88,45 +99,62 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchCloudData = async () => {
+  const fetchCloudData = async (sId, rId) => {
+    const senderId = typeof sId === 'number' ? sId : selectedSenderId;
+    const receiverId = typeof rId === 'number' ? rId : selectedReceiverId;
     try {
-      if (role === 'sender' || role === 'selection') {
-        const balRes = await fetch(`${API_URL}/balance/1`);
-        if (balRes.ok) {
-          const balData = await balRes.json();
-          setBalance(balData.balance_cents / 100);
-        }
-        
-        const audRes = await fetch(`${API_URL}/audit/1`);
-        if (audRes.ok) {
-          const audData = await audRes.json();
-          setTransactions(audData.history.map(tx => ({
+      // 1. Fetch live balance & audit records for selected Sender
+      const senderBalRes = await fetch(`${API_URL}/balance/${senderId}`);
+      if (senderBalRes.ok) {
+        const balData = await senderBalRes.json();
+        setBalance(balData.balance_cents / 100);
+      }
+      
+      const senderAudRes = await fetch(`${API_URL}/audit/${senderId}`);
+      if (senderAudRes.ok) {
+        const audData = await senderAudRes.json();
+        const senderHistory = audData.history || [];
+        setTransactions(senderHistory.map(tx => {
+          const isDebit = tx.sender_id === senderId || (tx.client_id === senderId && !tx.sender_id);
+          const otherParty = isDebit ? (tx.receiver_id ? `Client #${tx.receiver_id}` : 'Merchant') : (tx.sender_id ? `Client #${tx.sender_id}` : 'Customer');
+          return {
             id: tx._id,
-            title: 'QSP3 Secure Tx',
+            title: isDebit ? `Sent to ${otherParty}` : `Received from ${otherParty}`,
             hash: tx.tx_hash ? (tx.tx_hash.substring(0, 14) + '...') : 'N/A',
             fullHash: tx.tx_hash || '',
-            amount: `-$${(tx.amount_cents / 100).toFixed(2)}`
-          })));
-        }
-      } 
-      if (role === 'receiver' || role === 'selection') {
-        const balRes = await fetch(`${API_URL}/balance/2`);
-        if (balRes.ok) {
-          const balData = await balRes.json();
-          setReceiverBalance(balData.balance_cents / 100);
-        }
-        
-        const audRes = await fetch(`${API_URL}/audit/2`);
-        if (audRes.ok) {
-          const audData = await audRes.json();
-          setReceiverTransactions(audData.history.map(tx => ({
+            amount: `${isDebit ? '-' : '+'}$${(tx.amount_cents / 100).toFixed(2)}`,
+            sender_id: tx.sender_id || tx.client_id,
+            receiver_id: tx.receiver_id,
+            status: tx.status || 'APPROVED'
+          };
+        }));
+      }
+
+      // 2. Fetch live balance & audit records for selected Receiver
+      const receiverBalRes = await fetch(`${API_URL}/balance/${receiverId}`);
+      if (receiverBalRes.ok) {
+        const balData = await receiverBalRes.json();
+        setReceiverBalance(balData.balance_cents / 100);
+      }
+      
+      const receiverAudRes = await fetch(`${API_URL}/audit/${receiverId}`);
+      if (receiverAudRes.ok) {
+        const audData = await receiverAudRes.json();
+        const receiverHistory = audData.history || [];
+        setReceiverTransactions(receiverHistory.map(tx => {
+          const isCredit = tx.receiver_id === receiverId;
+          const otherParty = isCredit ? (tx.sender_id ? `Client #${tx.sender_id}` : 'Customer') : (tx.receiver_id ? `Client #${tx.receiver_id}` : 'Merchant');
+          return {
             id: tx._id,
-            title: 'Customer Payment',
+            title: isCredit ? `Received from ${otherParty}` : `Sent to ${otherParty}`,
             hash: tx.tx_hash ? (tx.tx_hash.substring(0, 14) + '...') : 'N/A',
             fullHash: tx.tx_hash || '',
-            amount: `+$${(tx.amount_cents / 100).toFixed(2)}`
-          })));
-        }
+            amount: `${isCredit ? '+' : '-'}$${(tx.amount_cents / 100).toFixed(2)}`,
+            sender_id: tx.sender_id || tx.client_id,
+            receiver_id: tx.receiver_id,
+            status: tx.status || 'APPROVED'
+          };
+        }));
       }
     } catch (e) {
       console.log("Cloud Backend Offline. Using Local Fallback.", e);
@@ -134,8 +162,8 @@ function App() {
   };
 
   useEffect(() => {
-    fetchCloudData();
-  }, [role]);
+    fetchCloudData(selectedSenderId, selectedReceiverId);
+  }, [role, selectedSenderId, selectedReceiverId]);
 
   // SOCKET NETWORK STATUS & REAL QUIC EVENTS
   useEffect(() => {
@@ -432,7 +460,9 @@ function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               tx_hash: newHash,
-              client_id: 1,
+              sender_id: selectedSenderId,
+              receiver_id: selectedReceiverId,
+              client_id: selectedSenderId,
               amount_cents: Math.round(simAmount * 100),
               status: "SUCCESS",
               zkp_proof_id: "browser_demo_" + Date.now()
@@ -442,7 +472,7 @@ function App() {
           console.log("Cloud Push failed, local fallback only", e); 
         }
 
-        fetchCloudData();
+        fetchCloudData(selectedSenderId, selectedReceiverId);
 
         if ('NDEFReader' in window) {
           try {
@@ -450,7 +480,7 @@ function App() {
             ndef.write({
               records: [{
                 recordType: "text",
-                data: JSON.stringify({ type: 'QSP3_PAYMENT_INIT', amount: simAmount, hash: newHash })
+                data: JSON.stringify({ type: 'QSP3_PAYMENT_INIT', amount: simAmount, hash: newHash, sender_id: selectedSenderId, receiver_id: selectedReceiverId })
               }]
             }).catch(() => console.log("NFC Write resolved with expected P2P block"));
           } catch {
@@ -458,7 +488,7 @@ function App() {
           }
         }
         
-        socket.emit('payment_sent', { amount: simAmount, hash: newHash });
+        socket.emit('payment_sent', { amount: simAmount, hash: newHash, sender_id: selectedSenderId, receiver_id: selectedReceiverId });
       }
       
       setTimeout(() => {
@@ -488,7 +518,8 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           amount_cents: simAmountCents,
-          client_id: 1,
+          sender_id: selectedSenderId,
+          receiver_id: selectedReceiverId,
           lat, lon,
           tilt_x: tiltX,
           tilt_y: tiltY,
@@ -501,12 +532,13 @@ function App() {
       if (result.status === 'SUCCESS') {
         setQuicExecutionBanner(`SECURE QUIC PAYMENT SETTLED: ${result.ack}`);
         setQuicServerOnline(true);
-        fetchCloudData();
+        fetchCloudData(selectedSenderId, selectedReceiverId);
       } else if (result.status === 'OFFLINE') {
         setQuicExecutionBanner(`QUIC DAEMON OFFLINE: ${result.error || 'Server unreachable at 127.0.0.1:4433'}. Run quic_server.py in terminal.`);
         setQuicServerOnline(false);
       } else {
-        setQuicExecutionBanner(`QUIC EXECUTION RESULT: ${result.error || JSON.stringify(result)}`);
+        setQuicExecutionBanner(`QUIC EXECUTION RESULT: ${result.ack || result.error || JSON.stringify(result)}`);
+        fetchCloudData(selectedSenderId, selectedReceiverId);
       }
     } catch (err) {
       setQuicExecutionBanner(`BACKEND UNREACHABLE: Failed to connect to API gateway (${API_URL}): ${err.message}`);
@@ -554,8 +586,8 @@ function App() {
                 Primary client wallet. Supports Browser NFC Demo, real-time hardware orientation feeds, local heuristic scoring, and real Quantum-Resistant QUIC transactions.
               </div>
               <div className="role-card-features">
-                <div>▸ Client ID: 1 (Alexander D.)</div>
-                <div>▸ Mode: Payment Originator</div>
+                <div>▸ Clients: #100 (Customer A), #200 (Customer B), #300 (Customer C)</div>
+                <div>▸ Mode: Payment Originator (Dynamic Multi-User Selection)</div>
                 <div>▸ Security: mTLS + Kyber-like PQC + ZKP + Shamir MPC</div>
               </div>
             </div>
@@ -567,7 +599,7 @@ function App() {
                 Point-of-Sale listening station. Features low-latency WebSocket / Web NFC broadcast reception, instant credit notifications, and automated ledger anchoring.
               </div>
               <div className="role-card-features">
-                <div>▸ Client ID: 2 (Store #9942-A)</div>
+                <div>▸ Client: #400 (Merchant A) / Multi-Receiver</div>
                 <div>▸ Mode: Payment Settlement Node</div>
                 <div>▸ Security: Immutable MongoDB & Blockchain Audit</div>
               </div>
@@ -579,6 +611,9 @@ function App() {
   }
 
   // RENDER: Main Desktop Dashboard
+  const senderUser = AVAILABLE_USERS.find(u => u.id === selectedSenderId) || { id: selectedSenderId, name: `Client #${selectedSenderId}` };
+  const receiverUser = AVAILABLE_USERS.find(u => u.id === selectedReceiverId) || { id: selectedReceiverId, name: `Client #${selectedReceiverId}` };
+
   return (
     <div className="app-wrapper">
       {/* Top Header */}
@@ -607,7 +642,7 @@ function App() {
 
         <div className="header-actions">
           <div className={`mode-badge ${role === 'receiver' ? 'receiver-mode' : ''}`}>
-            {role === 'sender' ? 'CUSTOMER WALLET (CLIENT #1)' : 'MERCHANT POS (CLIENT #2)'}
+            {role === 'sender' ? `SENDER: #${senderUser.id} (${senderUser.name.toUpperCase()})` : `RECEIVER: #${receiverUser.id} (${receiverUser.name.toUpperCase()})`}
           </div>
           <button className="profile-switch-btn" onClick={() => setRole(role === 'sender' ? 'receiver' : 'sender')}>
             ⇄ Switch to {role === 'sender' ? 'Merchant' : 'Customer'}
@@ -627,10 +662,51 @@ function App() {
         <section className="dashboard-panel">
           <div className="panel-header">
             <div>
-              <div className="panel-title">💳 Customer Wallet</div>
-              <div className="panel-subtitle">Browser Proximity Payment Engine</div>
+              <div className="panel-title">💳 Multi-User Wallet</div>
+              <div className="panel-subtitle">Select Sender & Receiver Settlement Path</div>
             </div>
-            <span className="panel-tag demo-tag">Browser Demo</span>
+            <span className="panel-tag demo-tag">Phase 3 Multi-User</span>
+          </div>
+
+          {/* Multi-User Selector Card */}
+          <div className="multi-user-selector-card">
+            <div className="user-select-grid">
+              <div className="user-select-field-group">
+                <label className="user-select-label">
+                  <span className="user-role-badge sender-badge">Sender</span>
+                </label>
+                <select 
+                  className="user-select-control"
+                  value={selectedSenderId} 
+                  onChange={(e) => setSelectedSenderId(parseInt(e.target.value, 10))}
+                >
+                  {AVAILABLE_USERS.map(u => (
+                    <option key={`sender-${u.id}`} value={u.id}>
+                      #{u.id} — {u.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="user-select-arrow">➔</div>
+
+              <div className="user-select-field-group">
+                <label className="user-select-label">
+                  <span className="user-role-badge receiver-badge">Receiver</span>
+                </label>
+                <select 
+                  className="user-select-control"
+                  value={selectedReceiverId} 
+                  onChange={(e) => setSelectedReceiverId(parseInt(e.target.value, 10))}
+                >
+                  {AVAILABLE_USERS.map(u => (
+                    <option key={`receiver-${u.id}`} value={u.id}>
+                      #{u.id} — {u.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
           {/* Virtual Card */}
@@ -639,11 +715,11 @@ function App() {
               <div className="chip-graphic"></div>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color)" strokeWidth="2"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
             </div>
-            <div className="card-number-display">**** **** **** 3094</div>
+            <div className="card-number-display">**** **** **** {selectedSenderId.toString().padStart(4, '0')}</div>
             <div className="card-bottom-row">
               <div>
                 <div style={{fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase'}}>Card Holder</div>
-                <div className="card-holder-name">ALEXANDER D.</div>
+                <div className="card-holder-name">{senderUser.name.toUpperCase()}</div>
               </div>
               <div className="card-balance-display">
                 <div style={{fontSize: '0.68rem', color: 'var(--text-dim)', textTransform: 'uppercase'}}>Available Balance</div>
@@ -1045,14 +1121,14 @@ function App() {
               <div className="panel-title">📑 Transaction & Audit Ledger</div>
               <div className="panel-subtitle">Audited Records (MongoDB & Blockchain)</div>
             </div>
-            <button className="clear-log-btn" onClick={fetchCloudData}>↻ Refresh</button>
+            <button className="clear-log-btn" onClick={() => fetchCloudData()}>↻ Refresh</button>
           </div>
 
-          {/* Merchant POS Widget (If in merchant mode or split view) */}
+          {/* Merchant / Receiver POS Widget */}
           <div className="merchant-pos-box">
             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-              <span className="pos-revenue-label">🏪 Store #9942-A (Receiver)</span>
-              <span style={{fontSize: '0.75rem', color: 'var(--text-dim)'}}>POS Terminal 01</span>
+              <span className="pos-revenue-label">🏪 {receiverUser.name} (Receiver #{receiverUser.id})</span>
+              <span style={{fontSize: '0.75rem', color: 'var(--text-dim)'}}>POS Terminal #{receiverUser.id}</span>
             </div>
             <div className="pos-revenue-val">${receiverBalance.toFixed(2)}</div>
             
@@ -1060,7 +1136,7 @@ function App() {
               <div className="nfc-radar-zone" onClick={activateNfcScanner}>
                 <div className="pulsing-dot"></div>
                 <div style={{fontSize: '0.8rem', color: 'var(--text-light)', fontWeight: 600}}>POS Listening Active</div>
-                <div style={{fontSize: '0.72rem', color: 'var(--text-dim)'}}>Tap here to enable Web NFC scanner or broadcast via Socket</div>
+                <div style={{fontSize: '0.72rem', color: 'var(--text-dim)'}}>Listening for incoming P2P settlement broadcasts</div>
               </div>
             ) : (
               <div className="incoming-banner">
@@ -1086,7 +1162,7 @@ function App() {
           {/* MongoDB Transaction Stream */}
           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px'}}>
             <span style={{fontSize: '0.78rem', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 600}}>
-              {role === 'receiver' ? 'Merchant Audit Stream' : 'Customer Transaction Stream'}
+              {role === 'receiver' ? `Audit Stream (#${receiverUser.id} ${receiverUser.name})` : `Transaction Stream (#${senderUser.id} ${senderUser.name})`}
             </span>
             <span style={{fontSize: '0.72rem', color: 'var(--primary-color)', fontFamily: 'JetBrains Mono'}}>
               {(role === 'receiver' ? receiverTransactions : transactions).length} Records
@@ -1105,9 +1181,16 @@ function App() {
                     <span className="ledger-item-title">{tx.title}</span>
                     <span className="ledger-item-hash">{tx.hash}</span>
                   </div>
-                  <span className={`ledger-item-amount ${tx.amount.startsWith('+') ? 'positive' : 'negative'}`}>
-                    {tx.amount}
-                  </span>
+                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px'}}>
+                    <span className={`ledger-item-amount ${tx.amount.startsWith('+') ? 'positive' : 'negative'}`}>
+                      {tx.amount}
+                    </span>
+                    {tx.status && (
+                      <span style={{fontSize: '0.62rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(0, 230, 118, 0.1)', color: 'var(--success-color)', fontFamily: 'JetBrains Mono'}}>
+                        {tx.status}
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))
             )}

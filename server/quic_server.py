@@ -11,6 +11,11 @@ import secrets
 
 # Ensure project root is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
+except Exception:
+    pass
 
 from utils.pqc import generate_keypair, decapsulate
 from utils.totp import verify_totp_token
@@ -86,6 +91,31 @@ class PaymentServerProtocol(QuicConnectionProtocol):
                     "client_id": sender_id,
                     "error": "Blockchain write failed"
                 })
+
+            # 3. Terminal Transaction Summary
+            if success:
+                sender_doc = await get_user(sender_id)
+                receiver_doc = await get_user(receiver_id)
+                sender_name = sender_doc.get("name", f"Customer {sender_id}") if sender_doc else f"Client {sender_id}"
+                receiver_name = receiver_doc.get("name", f"Merchant {receiver_id}") if receiver_doc else f"Client {receiver_id}"
+                amount_fmt = f"${amount_cents / 100:.2f}"
+                mongo_status = "ATOMIC SETTLEMENT ✓"
+                blockchain_status = "AUDIT RECORDED ✓" if blockchain_success else "NOT RECORDED ✗"
+
+                summary = (
+                    "\n════════════════════════════════════════════\n"
+                    "        QSP3 PAYMENT TRANSACTION\n"
+                    "════════════════════════════════════════════\n"
+                    f"Sender       : Client {sender_id} — {sender_name}\n"
+                    f"Receiver     : Client {receiver_id} — {receiver_name}\n"
+                    f"Amount       : {amount_fmt}\n"
+                    f"Status       : SUCCESS\n"
+                    f"Transaction  : {tx_hash}\n"
+                    f"MongoDB      : {mongo_status}\n"
+                    f"Blockchain   : {blockchain_status}\n"
+                    "════════════════════════════════════════════\n"
+                )
+                print(summary, flush=True)
 
         except Exception as e:
             print(f"Server [Audit-Error]: Failed to log to cloud: {e}")

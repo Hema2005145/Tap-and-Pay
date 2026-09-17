@@ -226,9 +226,12 @@ class PaymentClient:
                 )
             
             # 2. Generate Proof
-            cmd_args = ["snarkjs", "groth16", "prove", "balance_check_final.zkey", "temp_witness.wtns", "temp_proof.json", "temp_public.json"]
+            # Fix: use "npx snarkjs ..." as a single string with shell=True so it works on
+            # Windows (where passing a list to shell=True causes cmd.exe to ignore all
+            # arguments after index 0) and resolves snarkjs without a global PATH install.
+            cmd_args = ["npx", "snarkjs", "groth16", "prove", "balance_check_final.zkey", "temp_witness.wtns", "temp_proof.json", "temp_public.json"]
             subprocess.run(
-                " ".join(cmd_args) if sys.platform != "win32" else cmd_args,
+                " ".join(cmd_args),
                 cwd=self.zkp_dir, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             
