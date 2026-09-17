@@ -3,8 +3,8 @@ import { io } from 'socket.io-client';
 import './App.css';
 
 // WebSocket connection for fallback/confirmation syncing & real QUIC telemetry
-const SOCKET_URL = 'http://127.0.0.1:3001';
-const API_URL = 'http://127.0.0.1:8000';
+const SOCKET_URL = 'http://192.168.1.4:3001';
+const API_URL = 'http://192.168.1.4:8000';
 
 const socket = io(SOCKET_URL, {
   reconnectionAttempts: 10,
