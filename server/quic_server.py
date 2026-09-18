@@ -23,7 +23,7 @@ from utils.crypto_payload import decrypt_payload
 from utils.binary_payload import deserialize_payment
 import hashlib
 
-from utils.db import get_user, log_transaction, update_balance, TransactionRecord, get_balance_optimized, settle_payment_atomic
+from utils.db import get_user, log_transaction, update_balance, TransactionRecord, get_balance_optimized, settle_payment_atomic, db, get_next_tx_id
 from utils.zkp_verifier import verify_proof
 from utils.shamir_mpc import reconstruct_secret
 import datetime
@@ -72,16 +72,51 @@ class PaymentServerProtocol(QuicConnectionProtocol):
                 })
 
             # 2. PHASE 8: Log to Blockchain
-            blockchain_success = await log_to_blockchain(tx_hash, sender_id, amount_cents, status)
-            if blockchain_success:
-                print(f"Server [Audit-Blockchain]: Tx {tx_hash[:10]}... successfully stored on immutable ledger.")
+            blockchain_hash = await log_to_blockchain(tx_hash, sender_id, amount_cents, status)
+            blockchain_success = bool(blockchain_hash)
+            if blockchain_hash:
+                print(f"Server [Audit-Blockchain]: Tx {tx_hash[:10]}... successfully stored on immutable ledger (Hash: {blockchain_hash[:12]}...).")
+                try:
+                    await db.transactions.update_one(
+                        {"tx_hash": tx_hash},
+                        {"$set": {"blockchain_hash": blockchain_hash}}
+                    )
+                except Exception as e:
+                    print(f"Server [Warning]: Could not persist blockchain_hash to DB: {e}")
+
+                sender_doc = await get_user(sender_id)
+                receiver_doc = await get_user(receiver_id)
+                sender_name = sender_doc.get("name", f"Customer {sender_id}") if sender_doc else f"Client {sender_id}"
+                receiver_name = receiver_doc.get("name", f"Merchant {receiver_id}") if receiver_doc else f"Client {receiver_id}"
+                IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+                payment_time = datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+
+                # Get sequential transaction ID from MongoDB atomic counter
+                seq_id = await get_next_tx_id()
+                transaction_id = f"TX-{seq_id:06d}"
+
+                # Persist transaction_id to MongoDB record
+                try:
+                    await db.transactions.update_one(
+                        {"tx_hash": tx_hash},
+                        {"$set": {"transaction_id": transaction_id}}
+                    )
+                except Exception as e:
+                    print(f"Server [Warning]: Could not persist transaction_id to DB: {e}")
+
                 broadcast_quic_event("BLOCKCHAIN_AUDIT", "SUCCESS", {
                     "tx_hash": tx_hash,
+                    "transaction_id": transaction_id,
+                    "blockchain_hash": blockchain_hash,
                     "amount_cents": amount_cents,
+                    "amount_str": f"${amount_cents / 100:.2f}",
                     "client_id": sender_id,
                     "sender_id": sender_id,
+                    "sender_name": sender_name,
                     "receiver_id": receiver_id,
-                    "status": "MINED_ON_CHAIN"
+                    "receiver_name": receiver_name,
+                    "timestamp": payment_time,
+                    "status": "RECORDED"
                 })
             else:
                 print(f"Server [Audit-Blockchain]: Failed to store Tx {tx_hash[:10]}... on ledger.")
@@ -146,6 +181,14 @@ class PaymentServerProtocol(QuicConnectionProtocol):
 
             sender_id = decrypted_data.get("sender_id", decrypted_data.get("client_id", 1))
             receiver_id = decrypted_data.get("receiver_id", 2)
+
+            if sender_id == receiver_id:
+                print(f"Server [Security]: Self-payment rejected (sender_id={sender_id}, receiver_id={receiver_id}).")
+                response = b"PAYMENT_ERR: Self-payment is not allowed. Please select a different receiver."
+                broadcast_quic_event("PAYMENT_ACK", "FAILED", {"error": "Self-payment is not allowed. Please select a different receiver."})
+                self._quic.send_stream_data(stream_id, response, end_stream=True)
+                self.transmit()
+                return
 
             # Pre-validate sender and receiver existence in database
             sender_user = await get_user(sender_id)

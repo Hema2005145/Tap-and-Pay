@@ -255,6 +255,11 @@ class PaymentClient:
         """
         behavior_data: dict containing lat, lon, tilt_x, tilt_y, tilt_z, hour
         """
+        if client_id == receiver_id:
+            print("Client [Security]: Self-payment rejected. Sender and receiver cannot be the same.")
+            broadcast_quic_event("PAYMENT_ACK", "FAILED", {"error": "Self-payment is not allowed. Please select a different receiver."})
+            return b"PAYMENT_ERR: Self-payment is not allowed. Please select a different receiver."
+
         # --- PHASE 3: BEHAVIORAL AI SHIELD ---
         # Run local edge inference before hitting the network
         if self.ai_model and behavior_data:

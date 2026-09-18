@@ -62,8 +62,9 @@ async def log_to_blockchain(tx_hash_str, client_id, amount_cents, status="APPROV
         
         # Wait for the block to be mined
         receipt = w3.eth.wait_for_transaction_receipt(tx)
-        print(f"Blockchain [Web3]: Mined Tx {tx_hash_str[:10]}... into Block {receipt.blockNumber} (Gas Used: {receipt.gasUsed})")
-        return True
+        blockchain_hash = receipt.transactionHash.hex()
+        print(f"Blockchain [Web3]: Mined Tx {tx_hash_str[:10]}... into Block {receipt.blockNumber} (Hash: {blockchain_hash[:12]}..., Gas Used: {receipt.gasUsed})")
+        return blockchain_hash
     except Exception as e:
         print(f"Blockchain [Web3 Error]: {e}")
-        return False
+        return None

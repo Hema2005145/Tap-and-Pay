@@ -175,7 +175,6 @@
   grid-template-columns: 360px 1fr 380px;
   gap: 20px;
   padding: 20px 24px;
-  flex: 1;
 }
 
 @media (max-width: 1440px) {
@@ -204,7 +203,6 @@
   gap: 16px;
   box-shadow: var(--shadow-card);
   position: relative;
-  overflow: hidden;
 }
 
 .dashboard-panel::before {
@@ -833,7 +831,103 @@
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
-  max-height: 280px;
+  max-height: 480px;
+  padding-right: 4px;
+}
+
+/* Unified Transaction Stream Card */
+.transaction-record-card {
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(0, 242, 254, 0.18);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.transaction-record-card:hover {
+  border-color: rgba(0, 242, 254, 0.4);
+  background: rgba(15, 23, 42, 0.85);
+  box-shadow: 0 4px 15px rgba(0, 242, 254, 0.1);
+}
+
+.tx-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 8px;
+}
+
+.tx-parties {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-light);
+  letter-spacing: 0.3px;
+}
+
+.tx-amount {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--success-color);
+}
+
+.tx-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.74rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.tx-meta-label {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.tx-meta-value {
+  color: var(--text-light);
+}
+
+.tx-meta-value.tx-id {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.tx-hash-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 4px;
+  padding: 4px 8px;
+  word-break: break-all;
+  width: 100%;
+}
+
+.tx-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tx-status-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  background: rgba(0, 230, 118, 0.12);
+  color: var(--success-color);
+  border: 1px solid rgba(0, 230, 118, 0.3);
 }
 
 .ledger-item {
@@ -997,7 +1091,7 @@
 .terminal-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .clear-log-btn {
@@ -1029,6 +1123,33 @@
   gap: 4px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.74rem;
+}
+
+/* Custom Slim Scrollbars */
+.quic-pipeline-container::-webkit-scrollbar,
+.ledger-stream::-webkit-scrollbar,
+.terminal-log-stream::-webkit-scrollbar {
+  width: 5px;
+}
+
+.quic-pipeline-container::-webkit-scrollbar-track,
+.ledger-stream::-webkit-scrollbar-track,
+.terminal-log-stream::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+  border-radius: 4px;
+}
+
+.quic-pipeline-container::-webkit-scrollbar-thumb,
+.ledger-stream::-webkit-scrollbar-thumb,
+.terminal-log-stream::-webkit-scrollbar-thumb {
+  background: rgba(0, 242, 254, 0.25);
+  border-radius: 4px;
+}
+
+.quic-pipeline-container::-webkit-scrollbar-thumb:hover,
+.ledger-stream::-webkit-scrollbar-thumb:hover,
+.terminal-log-stream::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 242, 254, 0.5);
 }
 
 .log-entry {

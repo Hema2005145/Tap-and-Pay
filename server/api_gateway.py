@@ -39,12 +39,37 @@ async def check_balance(client_id: int):
 async def record_transaction(tx: TransactionRecord):
     sender_id = tx.sender_id if tx.sender_id is not None else tx.client_id
     receiver_id = tx.receiver_id if tx.receiver_id is not None else 2
+    if sender_id == receiver_id:
+        raise HTTPException(status_code=400, detail="Self-payment is not allowed. Please select a different receiver.")
     success, msg = await settle_payment_atomic(sender_id, receiver_id, tx.amount_cents, tx.tx_hash, tx.status)
     if not success:
         raise HTTPException(status_code=400, detail=msg)
     # Log to Blockchain
-    await log_to_blockchain(tx.tx_hash, sender_id, tx.amount_cents, tx.status)
+    blockchain_hash = await log_to_blockchain(tx.tx_hash, sender_id, tx.amount_cents, tx.status)
+    if blockchain_hash:
+        await db.transactions.update_one({"tx_hash": tx.tx_hash}, {"$set": {"blockchain_hash": blockchain_hash}})
     return {"status": "Transaction settled atomically and balance updated"}
+
+@app.get("/transactions")
+async def get_all_transactions():
+    """Retrieve all historical transactions across all users for the unified transaction stream."""
+    cursor = db.transactions.find().sort("timestamp", -1).limit(50)
+    history = await cursor.to_list(length=50)
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    for tx in history:
+        tx["_id"] = str(tx["_id"])
+        if "timestamp" in tx and hasattr(tx["timestamp"], "strftime"):
+            ts = tx["timestamp"]
+            # Convert to IST if the datetime is timezone-naive (UTC stored) or already tz-aware
+            if ts.tzinfo is None:
+                # Assume stored as UTC, convert to IST
+                ts = ts.replace(tzinfo=datetime.timezone.utc).astimezone(IST)
+            else:
+                ts = ts.astimezone(IST)
+            tx["timestamp"] = ts.strftime("%Y-%m-%d %H:%M:%S")
+        elif "timestamp" in tx:
+            tx["timestamp"] = str(tx["timestamp"])[:19]  # trim to YYYY-MM-DD HH:MM:SS
+    return {"history": history}
 
 @app.get("/audit/{client_id}")
 async def get_audit_trail(client_id: int):
@@ -88,6 +113,13 @@ async def execute_quic_payment(req: dict):
         amount_cents = int(req.get("amount_cents", 2500))
         sender_id = int(req.get("sender_id", req.get("client_id", 1)))
         receiver_id = int(req.get("receiver_id", 2))
+
+        if sender_id == receiver_id:
+            return {
+                "status": "FAILED",
+                "ack": "PAYMENT_ERR: Self-payment is not allowed. Please select a different receiver.",
+                "error": "Self-payment is not allowed. Please select a different receiver."
+            }
         lat = float(req.get("lat", 12.9716))
         lon = float(req.get("lon", 77.5946))
         tilt_x = float(req.get("tilt_x", 0.70))

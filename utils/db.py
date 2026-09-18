@@ -30,12 +30,27 @@ class TransactionRecord(BaseModel):
     receiver_id: Optional[int] = None
     amount_cents: int
     status: str # "APPROVED", "FLAGGED", "BLOCKED"
-    timestamp: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    blockchain_hash: Optional[str] = None
+    timestamp: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
 
 # --- DATABASE OPERATIONS ---
 
 # Local Balance Cache (Priority 13: Hot Storage)
 balance_cache = {}
+
+async def get_next_tx_id() -> int:
+    """
+    Returns the next sequential transaction ID using MongoDB's atomic findOneAndUpdate.
+    The counter document is stored in the 'counters' collection and persists across restarts.
+    Concurrent payments cannot get the same ID due to MongoDB's atomic $inc operation.
+    """
+    result = await db.counters.find_one_and_update(
+        {"_id": "tx_id"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True  # Return the document AFTER the update
+    )
+    return result["seq"]
 
 async def get_user(client_id: int):
     return await db.users.find_one({"client_id": client_id})
@@ -88,6 +103,9 @@ async def settle_payment_atomic(sender_id: int, receiver_id: int, amount_cents: 
     """
     if amount_cents <= 0:
         return False, "Amount must be strictly positive"
+
+    if sender_id == receiver_id:
+        return False, "Self-payment is not allowed. Sender and receiver must be different."
 
     try:
         async with await client.start_session() as session:

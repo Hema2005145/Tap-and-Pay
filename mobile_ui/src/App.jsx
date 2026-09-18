@@ -41,13 +41,15 @@ function App() {
   const [selectedSenderId, setSelectedSenderId] = useState(100);
   const [selectedReceiverId, setSelectedReceiverId] = useState(400);
 
+  // Unified Transaction Stream for all users (chronological, newest first)
+  const [transactionStream, setTransactionStream] = useState([]);
+
   // Sender State
   const [status, setStatus] = useState('idle');
   const [statusMsg, setStatusMsg] = useState('');
   const [amount, setAmount] = useState('25.00');
   const [balance, setBalance] = useState(500.00);
   const [txSpeed, setTxSpeed] = useState(null);
-  const [transactions, setTransactions] = useState([]);
 
   // Hardware Context Sensor State (Edge AI)
   const [lat, setLat] = useState(12.97);
@@ -64,7 +66,6 @@ function App() {
   const [receiverBalance, setReceiverBalance] = useState(0.00);
   const [receiverStatus, setReceiverStatus] = useState('waiting');
   const [receiverReceivedAmount, setReceiverReceivedAmount] = useState(0);
-  const [receiverTransactions, setReceiverTransactions] = useState([]);
 
   // Real QUIC Telemetry State
   const [quicPipeline, setQuicPipeline] = useState(INITIAL_PIPELINE);
@@ -112,49 +113,41 @@ function App() {
         setBalance(balData.balance_cents / 100);
       }
       
-      const senderAudRes = await fetch(`${API_URL}/audit/${senderId}`);
-      if (senderAudRes.ok) {
-        const audData = await senderAudRes.json();
-        const senderHistory = audData.history || [];
-        setTransactions(senderHistory.map(tx => {
-          const isDebit = tx.sender_id === senderId || (tx.client_id === senderId && !tx.sender_id);
-          const otherParty = isDebit ? (tx.receiver_id ? `Client #${tx.receiver_id}` : 'Merchant') : (tx.sender_id ? `Client #${tx.sender_id}` : 'Customer');
-          return {
-            id: tx._id,
-            title: isDebit ? `Sent to ${otherParty}` : `Received from ${otherParty}`,
-            hash: tx.tx_hash ? (tx.tx_hash.substring(0, 14) + '...') : 'N/A',
-            fullHash: tx.tx_hash || '',
-            amount: `${isDebit ? '-' : '+'}$${(tx.amount_cents / 100).toFixed(2)}`,
-            sender_id: tx.sender_id || tx.client_id,
-            receiver_id: tx.receiver_id,
-            status: tx.status || 'APPROVED'
-          };
-        }));
-      }
-
-      // 2. Fetch live balance & audit records for selected Receiver
+      // 2. Fetch live balance for selected Receiver
       const receiverBalRes = await fetch(`${API_URL}/balance/${receiverId}`);
       if (receiverBalRes.ok) {
         const balData = await receiverBalRes.json();
         setReceiverBalance(balData.balance_cents / 100);
       }
       
-      const receiverAudRes = await fetch(`${API_URL}/audit/${receiverId}`);
-      if (receiverAudRes.ok) {
-        const audData = await receiverAudRes.json();
-        const receiverHistory = audData.history || [];
-        setReceiverTransactions(receiverHistory.map(tx => {
-          const isCredit = tx.receiver_id === receiverId;
-          const otherParty = isCredit ? (tx.sender_id ? `Client #${tx.sender_id}` : 'Customer') : (tx.receiver_id ? `Client #${tx.receiver_id}` : 'Merchant');
+      // 3. Fetch Unified Transaction Stream (All users, chronological, newest first)
+      const txRes = await fetch(`${API_URL}/transactions`);
+      if (txRes.ok) {
+        const txData = await txRes.json();
+        const history = txData.history || [];
+        setTransactionStream(history.map(tx => {
+          const sId = tx.sender_id || tx.client_id || 100;
+          const rId = tx.receiver_id || 400;
+          const senderUserObj = AVAILABLE_USERS.find(u => u.id === sId);
+          const receiverUserObj = AVAILABLE_USERS.find(u => u.id === rId);
+          const sName = senderUserObj ? senderUserObj.name : `Client #${sId}`;
+          const rName = receiverUserObj ? receiverUserObj.name : `Client #${rId}`;
+          const txHashStr = tx.tx_hash || '';
+          const rawBcHash = tx.blockchain_hash || txHashStr;
+          const formattedBcHash = rawBcHash ? (rawBcHash.startsWith('0x') ? rawBcHash : `0x${rawBcHash}`) : '0x...';
           return {
-            id: tx._id,
-            title: isCredit ? `Received from ${otherParty}` : `Sent to ${otherParty}`,
-            hash: tx.tx_hash ? (tx.tx_hash.substring(0, 14) + '...') : 'N/A',
-            fullHash: tx.tx_hash || '',
-            amount: `${isCredit ? '+' : '-'}$${(tx.amount_cents / 100).toFixed(2)}`,
-            sender_id: tx.sender_id || tx.client_id,
-            receiver_id: tx.receiver_id,
-            status: tx.status || 'APPROVED'
+            id: tx._id || txHashStr || `tx-${Math.random()}`,
+            transaction_id: tx.transaction_id || (txHashStr ? `TX-${txHashStr.substring(0, 10).toUpperCase()}` : 'TX-RECORDED'),
+            tx_hash: txHashStr,
+            sender_id: sId,
+            sender_name: sName,
+            receiver_id: rId,
+            receiver_name: rName,
+            amount: `$${((tx.amount_cents || 0) / 100).toFixed(2)}`,
+            amount_cents: tx.amount_cents,
+            timestamp: tx.timestamp || 'N/A',
+            blockchain_hash: formattedBcHash,
+            status: tx.status || 'RECORDED'
           };
         }));
       }
@@ -304,14 +297,50 @@ function App() {
             };
             break;
 
-          case 'BLOCKCHAIN_AUDIT':
+          case 'BLOCKCHAIN_AUDIT': {
+            const senderDocName = AVAILABLE_USERS.find(u => u.id === (details.sender_id || details.client_id))?.name || `Client #${details.sender_id || details.client_id}`;
+            const receiverDocName = AVAILABLE_USERS.find(u => u.id === details.receiver_id)?.name || `Client #${details.receiver_id}`;
+            const auditObj = {
+              transaction_id: details.transaction_id || (details.tx_hash ? `TX-${details.tx_hash.substring(0, 10).toUpperCase()}` : 'TX-RECORDED'),
+              tx_hash: details.tx_hash || null,
+              sender_id: details.sender_id || details.client_id,
+              sender_name: details.sender_name || senderDocName,
+              receiver_id: details.receiver_id,
+              receiver_name: details.receiver_name || receiverDocName,
+              timestamp: details.timestamp || new Date().toISOString().replace('T', ' ').substring(0, 19),
+              blockchain_hash: (details.blockchain_hash || details.tx_hash) ? ((details.blockchain_hash || details.tx_hash).startsWith('0x') ? (details.blockchain_hash || details.tx_hash) : `0x${details.blockchain_hash || details.tx_hash}`) : '0x...',
+              status: details.status === 'RECORDED' || details.status === 'MINED_ON_CHAIN' || eventData.status === 'SUCCESS' ? 'RECORDED' : (details.status || eventData.status)
+            };
+            if (eventData.status === 'SUCCESS') {
+              const newRecord = {
+                id: details.tx_hash || `tx-${Date.now()}`,
+                transaction_id: auditObj.transaction_id,
+                tx_hash: auditObj.tx_hash,
+                sender_id: auditObj.sender_id,
+                sender_name: auditObj.sender_name,
+                receiver_id: auditObj.receiver_id,
+                receiver_name: auditObj.receiver_name,
+                amount: details.amount_str || (details.amount_cents ? `$${(details.amount_cents / 100).toFixed(2)}` : '$10.00'),
+                timestamp: auditObj.timestamp,
+                blockchain_hash: auditObj.blockchain_hash,
+                status: auditObj.status
+              };
+              setTransactionStream(prev => {
+                const exists = prev.some(t => (t.tx_hash && t.tx_hash === newRecord.tx_hash) || t.id === newRecord.id);
+                if (exists) {
+                  return prev.map(t => ((t.tx_hash && t.tx_hash === newRecord.tx_hash) || t.id === newRecord.id) ? newRecord : t);
+                }
+                return [newRecord, ...prev];
+              });
+            }
             next.blockchainAudit = {
               status: eventData.status,
               smart_contract: 'AuditTrail.sol',
               status_on_chain: details.status || (eventData.status === 'SUCCESS' ? 'MINED_ON_CHAIN' : 'FAILED'),
-              tx_hash: details.tx_hash || null
+              ...auditObj
             };
             break;
+          }
 
           default:
             break;
@@ -390,14 +419,8 @@ function App() {
   const processIncomingPayment = async (incAmount, incHash) => {
     setReceiverStatus('received');
     setReceiverReceivedAmount(incAmount);
-    
     setReceiverBalance(prev => prev + incAmount);
-    setReceiverTransactions(prev => [{
-      id: Date.now(),
-      title: 'Customer: Hardware NFC / Socket Tap',
-      hash: incHash ? (incHash.substring(0, 14) + '...') : '0x...',
-      amount: `+$${incAmount.toFixed(2)}`
-    }, ...prev].slice(0, 5));
+    fetchCloudData();
     
     setTimeout(() => {
       setReceiverStatus('waiting');
@@ -411,6 +434,13 @@ function App() {
   const handleTap = async () => {
     if (status === 'processing') return;
     setTxSpeed(null);
+
+    if (selectedSenderId === selectedReceiverId) {
+      setStatus('error');
+      setStatusMsg('Self-payment is not allowed. Please select a different receiver.');
+      setTimeout(() => { setStatus('idle'); setStatusMsg(''); }, 4000);
+      return;
+    }
     
     if (!amount || isNaN(amount) || parseFloat(amount) <= 0) {
       setStatus('error');
@@ -507,6 +537,12 @@ function App() {
   // -------------------------------------------------------------
   const executeSecureQuicPayment = async () => {
     if (isQuicExecuting) return;
+    if (selectedSenderId === selectedReceiverId) {
+      setQuicExecutionBanner('Self-payment is not allowed. Please select a different receiver.');
+      setTimeout(() => setQuicExecutionBanner(null), 5000);
+      return;
+    }
+
     setIsQuicExecuting(true);
     setQuicExecutionBanner('Initializing Secure QUIC Session to 127.0.0.1:4433...');
 
@@ -672,44 +708,51 @@ function App() {
 
           {/* Multi-User Selector Card */}
           <div className="multi-user-selector-card">
-            <div className="user-select-grid">
-              <div className="user-select-field-group">
-                <label className="user-select-label">
-                  <span className="user-role-badge sender-badge">Sender</span>
-                </label>
-                <select 
-                  className="user-select-control"
-                  value={selectedSenderId} 
-                  onChange={(e) => setSelectedSenderId(parseInt(e.target.value, 10))}
-                >
-                  {AVAILABLE_USERS.map(u => (
-                    <option key={`sender-${u.id}`} value={u.id}>
-                      #{u.id} — {u.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div className="user-select-grid">
+                <div className="user-select-field-group">
+                  <label className="user-select-label">
+                    <span className="user-role-badge sender-badge">Sender</span>
+                  </label>
+                  <select 
+                    className="user-select-control"
+                    value={selectedSenderId} 
+                    onChange={(e) => {
+                      const newSenderId = parseInt(e.target.value, 10);
+                      setSelectedSenderId(newSenderId);
+                      if (selectedReceiverId === newSenderId) {
+                        const nextRecv = AVAILABLE_USERS.find(u => u.id !== newSenderId);
+                        if (nextRecv) setSelectedReceiverId(nextRecv.id);
+                      }
+                    }}
+                  >
+                    {AVAILABLE_USERS.map(u => (
+                      <option key={`sender-${u.id}`} value={u.id}>
+                        #{u.id} — {u.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div className="user-select-arrow">➔</div>
+                <div className="user-select-arrow">➔</div>
 
-              <div className="user-select-field-group">
-                <label className="user-select-label">
-                  <span className="user-role-badge receiver-badge">Receiver</span>
-                </label>
-                <select 
-                  className="user-select-control"
-                  value={selectedReceiverId} 
-                  onChange={(e) => setSelectedReceiverId(parseInt(e.target.value, 10))}
-                >
-                  {AVAILABLE_USERS.map(u => (
-                    <option key={`receiver-${u.id}`} value={u.id}>
-                      #{u.id} — {u.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="user-select-field-group">
+                  <label className="user-select-label">
+                    <span className="user-role-badge receiver-badge">Receiver</span>
+                  </label>
+                  <select 
+                    className="user-select-control"
+                    value={selectedReceiverId} 
+                    onChange={(e) => setSelectedReceiverId(parseInt(e.target.value, 10))}
+                  >
+                    {AVAILABLE_USERS.filter(u => u.id !== selectedSenderId).map(u => (
+                      <option key={`receiver-${u.id}`} value={u.id}>
+                        #{u.id} — {u.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
-          </div>
 
           {/* Virtual Card */}
           <div className="virtual-card">
@@ -1148,50 +1191,49 @@ function App() {
             )}
           </div>
 
-          {/* Blockchain Explorer Card */}
-          <div className="blockchain-explorer-card">
-            <div className="explorer-header">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-              <span>Web3 Immutable Blockchain Status</span>
-            </div>
-            <div style={{fontSize: '0.74rem', fontFamily: 'JetBrains Mono', color: 'var(--text-dim)'}}>
-              <div>• Contract: AuditTrail.sol</div>
-              <div>• Network: Local EVM Test Ledger</div>
-              <div>• Audit Proof: SHA-256 Hash Anchoring</div>
-            </div>
-          </div>
-
-          {/* MongoDB Transaction Stream */}
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px'}}>
-            <span style={{fontSize: '0.78rem', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 600}}>
-              {role === 'receiver' ? `Audit Stream (#${receiverUser.id} ${receiverUser.name})` : `Transaction Stream (#${senderUser.id} ${senderUser.name})`}
+          {/* Unified Transaction Stream Header */}
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', flexShrink: 0}}>
+            <span style={{fontSize: '0.82rem', color: 'var(--text-light)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px'}}>
+              TRANSACTION STREAM
             </span>
-            <span style={{fontSize: '0.72rem', color: 'var(--primary-color)', fontFamily: 'JetBrains Mono'}}>
-              {(role === 'receiver' ? receiverTransactions : transactions).length} Records
+            <span style={{fontSize: '0.72rem', color: 'var(--primary-color)', fontFamily: 'JetBrains Mono', background: 'rgba(0, 242, 254, 0.08)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(0, 242, 254, 0.2)'}}>
+              {transactionStream.length} Records
             </span>
           </div>
 
           <div className="ledger-stream">
-            {(role === 'receiver' ? receiverTransactions : transactions).length === 0 ? (
-              <div style={{textAlign: 'center', padding: '30px 10px', color: 'var(--text-dim)', fontSize: '0.8rem'}}>
-                No ledger transactions recorded yet.
+            {transactionStream.length === 0 ? (
+              <div style={{textAlign: 'center', padding: '40px 10px', color: 'var(--text-dim)', fontSize: '0.8rem', fontStyle: 'italic'}}>
+                No transactions recorded yet. Completed payments will appear here in real time.
               </div>
             ) : (
-              (role === 'receiver' ? receiverTransactions : transactions).map((tx) => (
-                <div className="ledger-item" key={tx.id}>
-                  <div className="ledger-item-left">
-                    <span className="ledger-item-title">{tx.title}</span>
-                    <span className="ledger-item-hash">{tx.hash}</span>
-                  </div>
-                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px'}}>
-                    <span className={`ledger-item-amount ${tx.amount.startsWith('+') ? 'positive' : 'negative'}`}>
-                      {tx.amount}
+              transactionStream.map((tx) => (
+                <div className="transaction-record-card" key={tx.id || tx.tx_hash || tx.transaction_id}>
+                  <div className="tx-card-header">
+                    <span className="tx-parties">
+                      {tx.sender_name} → {tx.receiver_name}
                     </span>
-                    {tx.status && (
-                      <span style={{fontSize: '0.62rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(0, 230, 118, 0.1)', color: 'var(--success-color)', fontFamily: 'JetBrains Mono'}}>
-                        {tx.status}
-                      </span>
-                    )}
+                    <span className="tx-amount">{tx.amount}</span>
+                  </div>
+
+                  <div className="tx-meta-row">
+                    <span className="tx-meta-label">Transaction ID:</span>
+                    <span className="tx-meta-value tx-id">{tx.transaction_id}</span>
+                  </div>
+
+                  <div className="tx-meta-row">
+                    <span className="tx-meta-label">Payment Time:</span>
+                    <span className="tx-meta-value">{tx.timestamp}</span>
+                  </div>
+
+                  <div className="tx-meta-row" style={{flexDirection: 'column', alignItems: 'flex-start', gap: '3px'}}>
+                    <span className="tx-meta-label">Blockchain Hash:</span>
+                    <span className="tx-hash-badge">{tx.blockchain_hash}</span>
+                  </div>
+
+                  <div className="tx-card-footer">
+                    <span className="tx-meta-label">Status:</span>
+                    <span className="tx-status-badge">{tx.status}</span>
                   </div>
                 </div>
               ))
