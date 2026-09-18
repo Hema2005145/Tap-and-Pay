@@ -3,8 +3,9 @@ import { io } from 'socket.io-client';
 import './App.css';
 
 // WebSocket connection for fallback/confirmation syncing & real QUIC telemetry
-const SOCKET_URL = 'http://192.168.1.4:3001';
-const API_URL = 'http://192.168.1.4:8000';
+const BACKEND_HOST = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+const SOCKET_URL = `http://${BACKEND_HOST}:3001`;
+const API_URL = `http://${BACKEND_HOST}:8000`;
 
 const socket = io(SOCKET_URL, {
   reconnectionAttempts: 10,
@@ -81,21 +82,22 @@ function App() {
   // Check QUIC server and FastAPI connectivity
   const checkBackendHealth = async () => {
     try {
-      const res = await fetch(`${API_URL}/quic/status`, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(`${API_URL}/quic/status`, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         const data = await res.json();
-        setQuicServerOnline(data.quic_server_online);
+        setQuicServerOnline(Boolean(data.quic_server_online));
       } else {
         setQuicServerOnline(false);
       }
-    } catch {
+    } catch (err) {
+      console.warn("QUIC health probe error:", err);
       setQuicServerOnline(false);
     }
   };
 
   useEffect(() => {
     checkBackendHealth();
-    const interval = setInterval(checkBackendHealth, 8000);
+    const interval = setInterval(checkBackendHealth, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -210,7 +212,7 @@ function App() {
               error: details.error || null
             };
             if (eventData.status === 'SUCCESS') setQuicServerOnline(true);
-            if (eventData.status === 'FAILED' || eventData.status === 'OFFLINE') setQuicServerOnline(false);
+            if (eventData.status === 'OFFLINE') checkBackendHealth();
             break;
 
           case 'MTLS_VERIFICATION':
@@ -535,14 +537,14 @@ function App() {
         fetchCloudData(selectedSenderId, selectedReceiverId);
       } else if (result.status === 'OFFLINE') {
         setQuicExecutionBanner(`QUIC DAEMON OFFLINE: ${result.error || 'Server unreachable at 127.0.0.1:4433'}. Run quic_server.py in terminal.`);
-        setQuicServerOnline(false);
+        checkBackendHealth();
       } else {
         setQuicExecutionBanner(`QUIC EXECUTION RESULT: ${result.ack || result.error || JSON.stringify(result)}`);
         fetchCloudData(selectedSenderId, selectedReceiverId);
       }
     } catch (err) {
       setQuicExecutionBanner(`BACKEND UNREACHABLE: Failed to connect to API gateway (${API_URL}): ${err.message}`);
-      setQuicServerOnline(false);
+      checkBackendHealth();
     } finally {
       setIsQuicExecuting(false);
       setTimeout(() => setQuicExecutionBanner(null), 8000);

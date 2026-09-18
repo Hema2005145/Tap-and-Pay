@@ -130,10 +130,13 @@ async def execute_quic_payment(req: dict):
                 return {"status": "FAILED", "ack": ack_str}
             return {"status": "SUCCESS", "ack": ack_str}
     except Exception as e:
-        broadcast_quic_event("QUIC_CONNECTION", "OFFLINE", {
-            "error": f"QUIC Daemon Offline (127.0.0.1:4433 unreachable): {str(e)}"
+        err_msg = str(e)
+        is_conn_error = any(term in err_msg.lower() for term in ["unreachable", "connection refused", "timeout", "errno 10061"])
+        event_status = "OFFLINE" if is_conn_error else "FAILED"
+        broadcast_quic_event("QUIC_CONNECTION", event_status, {
+            "error": f"QUIC execution error: {err_msg}"
         })
-        return {"status": "OFFLINE", "error": f"QUIC Server unreachable: {str(e)}"}
+        return {"status": "OFFLINE" if is_conn_error else "FAILED", "error": f"QUIC Server unreachable: {err_msg}" if is_conn_error else f"Payment error: {err_msg}"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

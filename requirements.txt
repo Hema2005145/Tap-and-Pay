@@ -13,6 +13,8 @@ python-dotenv
 
 # Phase 3 & 9: Behavioral AI & Federated Learning
 tensorflow
+scikit-learn
+numpy
 flwr
 
 # Phase 6 & 8: Zero Knowledge Proofs & Blockchain
@@ -20,3 +22,4 @@ web3
 eth-tester
 py-evm
 py-solc-x
+py_ecc

@@ -258,16 +258,35 @@ class PaymentClient:
         # --- PHASE 3: BEHAVIORAL AI SHIELD ---
         # Run local edge inference before hitting the network
         if self.ai_model and behavior_data:
-            is_anomaly = self.ai_model.check_anomaly(
-                amount_cents, 
-                behavior_data['lat'], behavior_data['lon'],
-                behavior_data['tilt_x'], behavior_data['tilt_y'], behavior_data['tilt_z'],
-                behavior_data['hour']
-            )
-            
+            try:
+                is_anomaly = self.ai_model.check_anomaly(
+                    amount_cents,
+                    behavior_data['lat'], behavior_data['lon'],
+                    behavior_data['tilt_x'], behavior_data['tilt_y'], behavior_data['tilt_z'],
+                    behavior_data['hour']
+                )
+            except Exception as ai_err:
+                print(f"Client [AI]: check_anomaly raised exception: {ai_err}")
+                broadcast_quic_event("BEHAVIORAL_AI", "FAILED", {
+                    "mae_error": None,
+                    "threshold": None,
+                    "is_anomaly": None,
+                    "error": str(ai_err)
+                })
+                is_anomaly = False  # fail-open: allow transaction to proceed
+
             if is_anomaly:
                 print("Client [Security]: BEHAVIORAL ANOMALY DETECTED. Blocking Transaction.")
                 return b"AI_BLOCKED: Suspicious context. Requesting PIN/Biometric override."
+        elif not self.ai_model:
+            # ai_shield was None (model failed to load); emit a telemetry event so the
+            # frontend card does not remain indefinitely at WAITING FOR BACKEND.
+            broadcast_quic_event("BEHAVIORAL_AI", "FAILED", {
+                "mae_error": None,
+                "threshold": None,
+                "is_anomaly": None,
+                "error": "AI model not loaded"
+            })
             
         # --- PHASE 6: ZERO KNOWLEDGE PROOF ---
         zk_proof = None
